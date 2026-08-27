@@ -115,12 +115,18 @@ two variables in its environment.
 
 ## How it works
 
-```
-Claude Code  ──stdio──▶  outline-mcp  ──POST /api/<method>──▶  Outline
-                              │            Authorization: Bearer ol_api_…
-                              ├─ env: OUTLINE_API_URL · OUTLINE_API_KEY
-                              ├─ format.js  parse ref · truncate · render
-                              └─ client.js  timeout · error map · 429 retry
+```mermaid
+flowchart LR
+    CC[Claude Code / any MCP client]
+    OM[outline-mcp<br/>Node 18+, stdio server]
+    O[Outline instance]
+    F[format.js<br/>parse ref · truncate · render]
+    C[client.js<br/>timeout · error map · 429 retry]
+
+    CC -->|stdio| OM
+    OM -->|"POST /api/{method} · Bearer ol_api_…"| O
+    OM -.-> F
+    OM -.-> C
 ```
 
 The server never validates credentials at startup. A server that exits on boot
