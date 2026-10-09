@@ -41,7 +41,9 @@ function parseDocumentRef(input) {
     segment = s;
   }
 
+  // Drop the query/hash and any sub-path such as /edit or /history.
   segment = segment.split(/[?#]/)[0].replace(/\/+$/, '');
+  if (docIdx !== -1) segment = segment.split('/')[0];
   if (!segment) {
     return { kind: 'invalid', reason: `"${s}" has no document id — ${REF_HINT}.` };
   }

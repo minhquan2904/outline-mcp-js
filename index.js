@@ -42,6 +42,42 @@ async function fetchAndRender(deps, method, params, render) {
   return text(render(result.data, result.raw));
 }
 
+/**
+ * Writes have full rights unless OUTLINE_WRITE_DOC_ID is set: then they are
+ * confined to update_document on that single document. The allowed id and the
+ * target may be written differently (UUID vs urlId); when they are, Outline is
+ * asked to resolve the target so both names compare equal.
+ */
+async function writeBlocked(deps, tool, documentId) {
+  if (!deps.writeDocId) return null;
+  if (tool !== 'update_document') {
+    return `Error: writes are restricted to one document (OUTLINE_WRITE_DOC_ID); ${tool} is not allowed.`;
+  }
+  const want = parseDocumentRef(deps.writeDocId);
+  const got = parseDocumentRef(documentId);
+  let ok = want.kind !== 'invalid' && got.kind !== 'invalid' && want.id === got.id;
+  if (!ok && want.kind !== 'invalid' && got.kind !== 'invalid' && want.kind !== got.kind) {
+    const info = await deps.client.call('documents.info', { id: got.id });
+    const d = info.ok && info.data;
+    ok = Boolean(d) && (d.id === want.id || d.urlId === want.id);
+  }
+  return ok ? null : 'Error: this server may only update the document named by OUTLINE_WRITE_DOC_ID';
+}
+
+/** Resolve the document reference, apply the write guard, then run the call. */
+async function withDocument(deps, tool, documentId, run) {
+  const ref = parseDocumentRef(documentId);
+  if (ref.kind === 'invalid') return text(ref.reason);
+  const blocked = await writeBlocked(deps, tool, documentId);
+  if (blocked) return text(blocked);
+  return run(ref.id);
+}
+
+function describeDoc(d, deps) {
+  const doc = d || {};
+  return `"${doc.title || ''}" (${[...(doc.text || '')].length} characters)\n${absUrl(deps.baseUrl, doc.url)}`;
+}
+
 const TOOLS = [
   {
     name: 'search_documents',
@@ -171,6 +207,68 @@ const TOOLS = [
         (_data, raw) => formatList(raw, (c) =>
           `${c.createdAt}  ${(c.createdBy && c.createdBy.name) || 'unknown'}  [${c.id}]`)),
   },
+  {
+    name: 'create_document',
+    description:
+      'Create a new Outline document. Pass collectionId (and optionally ' +
+      'parentDocumentId to nest it). Published immediately unless publish=false.',
+    schema: {
+      title: z.string().describe('Document title'),
+      text: z.string().default('').describe('Markdown body'),
+      collectionId: z.string().describe('Collection to create the document in'),
+      parentDocumentId: z.string().optional().describe('Nest under this document'),
+      publish: z.boolean().default(true).describe('Publish immediately (default) or leave as draft'),
+    },
+    handler: async (a, deps) => {
+      const blocked = await writeBlocked(deps, 'create_document');
+      if (blocked) return text(blocked);
+      return fetchAndRender(deps, 'documents.create', compact(a), (d) => `Created ${describeDoc(d, deps)}`);
+    },
+  },
+  {
+    name: 'update_document',
+    description:
+      'Edit an Outline document\'s body and/or title. Appends text by default; ' +
+      'pass append=false to replace the body. Accepts a URL, urlId or UUID.',
+    schema: {
+      documentId: z.string().describe('Document URL, urlId, or UUID'),
+      text: z.string().optional().describe('Markdown to write'),
+      title: z.string().optional().describe('New title'),
+      append: z.boolean().default(true).describe('Append (default) or replace the body'),
+    },
+    handler: (a, deps) => withDocument(deps, 'update_document', a.documentId, (id) =>
+      fetchAndRender(deps, 'documents.update', compact({ id, text: a.text, title: a.title, append: a.append }),
+        (d) => `Updated ${describeDoc(d, deps)}`)),
+  },
+  {
+    name: 'move_document',
+    description:
+      'Move an Outline document to another collection and/or under another parent document.',
+    schema: {
+      documentId: z.string().describe('Document URL, urlId, or UUID'),
+      collectionId: z.string().optional().describe('Destination collection'),
+      parentDocumentId: z.string().optional().describe('Destination parent document'),
+    },
+    handler: (a, deps) => withDocument(deps, 'move_document', a.documentId, (id) =>
+      fetchAndRender(deps, 'documents.move', compact({ id, collectionId: a.collectionId, parentDocumentId: a.parentDocumentId }),
+        () => `Moved document ${id}`)),
+  },
+  {
+    name: 'archive_document',
+    description: 'Archive an Outline document (recoverable from the archive).',
+    schema: { documentId: z.string().describe('Document URL, urlId, or UUID') },
+    handler: (a, deps) => withDocument(deps, 'archive_document', a.documentId, (id) =>
+      fetchAndRender(deps, 'documents.archive', { id }, () => `Archived document ${id}`)),
+  },
+  {
+    name: 'delete_document',
+    description:
+      'Delete an Outline document. It goes to the trash and can be restored; ' +
+      'this tool never deletes permanently.',
+    schema: { documentId: z.string().describe('Document URL, urlId, or UUID') },
+    handler: (a, deps) => withDocument(deps, 'delete_document', a.documentId, (id) =>
+      fetchAndRender(deps, 'documents.delete', { id }, () => `Moved document ${id} to the trash`)),
+  },
 ];
 
 function buildServer(deps) {
@@ -185,6 +283,7 @@ function realDeps() {
   const baseUrl = process.env.OUTLINE_API_URL || '';
   return {
     baseUrl,
+    writeDocId: (process.env.OUTLINE_WRITE_DOC_ID || '').trim(),
     client: createClient({ baseUrl, apiKey: process.env.OUTLINE_API_KEY || '' }),
   };
 }

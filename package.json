@@ -1,7 +1,7 @@
 {
-  "name": "outline-mcp",
+  "name": "outline-mcp-js",
   "version": "1.0.0",
-  "description": "Read-only MCP server for Outline",
+  "description": "MCP server for Outline (read and write)",
   "main": "index.js",
   "license": "MIT",
   "engines": {
@@ -12,15 +12,15 @@
     "outline",
     "wiki",
     "model-context-protocol",
-    "read-only"
+    "write"
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/minhquan2904/outline-mcp"
+    "url": "https://github.com/minhquan2904/outline-mcp-js"
   },
   "scripts": {
     "start": "node index.js",
-    "test": "node --test tests/",
+    "test": "node --test tests/*.test.js",
     "smoke": "node smoke.js"
   },
   "dependencies": {

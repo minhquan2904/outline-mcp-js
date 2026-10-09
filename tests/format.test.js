@@ -61,6 +61,11 @@ test('parseDocumentRef: full URL, path, and slug-less URL all yield the urlId', 
   }
 });
 
+test('parseDocumentRef: drops sub-paths such as /edit', () => {
+  assert.deepStrictEqual(parseDocumentRef(`${BASE}/doc/my-spec-${URLID}/edit`), { kind: 'urlId', id: URLID });
+  assert.deepStrictEqual(parseDocumentRef(`${BASE}/doc/my-spec-${URLID}/history?x=1`), { kind: 'urlId', id: URLID });
+});
+
 test('parseDocumentRef: strips query string and hash', () => {
   assert.deepStrictEqual(parseDocumentRef(`${BASE}/doc/my-spec-${URLID}?ref=x#heading`),
     { kind: 'urlId', id: URLID });

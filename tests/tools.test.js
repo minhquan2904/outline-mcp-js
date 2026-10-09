@@ -29,6 +29,11 @@ const EXPECTED = [
   'list_revisions',
   'get_revision',
   'list_comments',
+  'create_document',
+  'update_document',
+  'move_document',
+  'archive_document',
+  'delete_document',
 ];
 
 /** Records what the handler asked the client to do. */
@@ -179,9 +184,66 @@ test('every tool survives an unconfigured client without throwing', async () => 
     list_revisions: { documentId: UUID },
     get_revision: { revisionId: 'r' },
     list_comments: { documentId: UUID },
+    create_document: { title: 't', collectionId: UUID },
+    update_document: { documentId: UUID, text: 'x' },
+    move_document: { documentId: UUID, collectionId: UUID },
+    archive_document: { documentId: UUID },
+    delete_document: { documentId: UUID },
   };
   for (const name of EXPECTED) {
     const out = await invoke(name, args[name], { client: rec.client, baseUrl: '' });
     assert.ok(out.content[0].text.length > 0, `${name} returned empty content`);
   }
+});
+
+// ── write tools ────────────────────────────────────────────────────────────
+
+test('write tools have full rights when no restriction is set', async () => {
+  const rec = recorder({ ok: true, data: { title: 'T', text: 'abc', url: '/doc/t-x' } });
+  const deps = { client: rec.client, baseUrl: BASE };
+  await invoke('create_document', { title: 'T', text: 'abc', collectionId: UUID }, deps);
+  await invoke('update_document', { documentId: UUID, text: 'abc' }, deps);
+  await invoke('move_document', { documentId: UUID, collectionId: UUID }, deps);
+  await invoke('archive_document', { documentId: UUID }, deps);
+  await invoke('delete_document', { documentId: UUID }, deps);
+  assert.deepStrictEqual(rec.calls.map((c) => c.method),
+    ['documents.create', 'documents.update', 'documents.move', 'documents.archive', 'documents.delete']);
+  assert.deepStrictEqual(rec.calls[1].params, { id: UUID, text: 'abc', append: true });
+});
+
+test('update_document: accepts a pasted edit URL', async () => {
+  const rec = recorder({ ok: true, data: { title: 'T', text: 'x', url: '/doc/t-x' } });
+  await invoke('update_document', { documentId: `${BASE}/doc/benchmark-mcp-${URLID}/edit`, text: 'x' },
+    { client: rec.client, baseUrl: BASE });
+  assert.strictEqual(rec.calls[0].params.id, URLID);
+});
+
+test('OUTLINE_WRITE_DOC_ID confines writes to update_document on that document', async () => {
+  const rec = recorder();
+  const deps = { client: rec.client, baseUrl: BASE, writeDocId: UUID };
+  const other = await invoke('update_document', { documentId: '11111111-2222-3333-4444-555555555555', text: 'x' }, deps);
+  assert.match(other.content[0].text, /may only update/);
+  const del = await invoke('delete_document', { documentId: UUID }, deps);
+  assert.match(del.content[0].text, /writes are restricted/);
+  const create = await invoke('create_document', { title: 't', collectionId: UUID }, deps);
+  assert.match(create.content[0].text, /writes are restricted/);
+  assert.strictEqual(rec.calls.length, 0);
+});
+
+test('OUTLINE_WRITE_DOC_ID given as a UUID still allows the same document by urlId', async () => {
+  const rec = recorder((method) => method === 'documents.info'
+    ? { ok: true, data: { id: UUID, urlId: URLID } }
+    : { ok: true, data: { title: 'T', text: 'x', url: '/doc/t-x' } });
+  const out = await invoke('update_document', { documentId: `${BASE}/doc/b-${URLID}/edit`, text: 'x' },
+    { client: rec.client, baseUrl: BASE, writeDocId: UUID });
+  assert.deepStrictEqual(rec.calls.map((c) => c.method), ['documents.info', 'documents.update']);
+  assert.match(out.content[0].text, /^Updated/);
+});
+
+test('a urlId that resolves to a different document is refused', async () => {
+  const rec = recorder({ ok: true, data: { id: '11111111-2222-3333-4444-555555555555', urlId: 'zzzzzzzzzz' } });
+  const out = await invoke('update_document', { documentId: URLID, text: 'x' },
+    { client: rec.client, baseUrl: BASE, writeDocId: UUID });
+  assert.match(out.content[0].text, /may only update/);
+  assert.deepStrictEqual(rec.calls.map((c) => c.method), ['documents.info']);
 });
